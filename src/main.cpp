@@ -18,8 +18,6 @@ void handle_request(http::request<http::string_body> const& req,
                     http::response<http::vector_body<uint8_t>>& res)
 {
     std::cout << "Request: " << req.target() << '\n';
-    // if (req.target() == "/bigfile") {
-    // The request target starts with a slash followed by "bigfile".
     if (req.target().starts_with("/bigfile")) {
         boost::url_view url = req.target();
         auto params = boost::urls::parse_query(url.encoded_query());
