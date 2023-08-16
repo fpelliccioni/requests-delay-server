@@ -76,7 +76,6 @@ void handle_request(http::request<http::string_body> const& req,
     } else {
         res.result(http::status::not_found);
         res.set(http::field::content_type, "text/plain");
-        // res.body() = "The resource was not found.";
         std::string error_msg = "The resource was not found.";
         res.body().assign(error_msg.begin(), error_msg.end());
     }
@@ -94,7 +93,6 @@ int main() {
         boost::beast::flat_buffer buffer;
         http::read(socket, buffer, req);
 
-        // http::response<http::string_body> res;
         http::response<http::vector_body<uint8_t>> res;
         handle_request(req, res);
 
