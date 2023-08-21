@@ -63,69 +63,106 @@ http::message_generator handle_request(http::request<Body, http::basic_fields<Al
 
     std::cout << "Request: " << req.target() << '\n';
 
-    if (req.method() != http::verb::get) {
+    if (req.method() != http::verb::get && req.method() != http::verb::post) {
         return bad_request("Unknown HTTP-method");
     }
 
-    if ( ! req.target().starts_with("/bigfile")) {
-        return not_found(req.target());
+    // Handling /echo
+    if (req.target() == "/echo" && req.method() == http::verb::post) {
+        http::response<http::string_body> res{http::status::ok, req.version()};
+        res.set(http::field::server, BOOST_BEAST_VERSION_STRING);
+        res.set(http::field::content_type, "text/plain");
+        res.keep_alive(req.keep_alive());
+        res.body() = req.body();
+        res.prepare_payload();
+        return res;
     }
 
-    boost::url_view url = req.target();
-    auto params = boost::urls::parse_query(url.encoded_query());
-    if ( ! params) {
-        return bad_request("Invalid query string");
+    // Handling /timestamp
+    if (req.target() == "/timestamp" && req.method() == http::verb::get) {
+        auto now = std::chrono::system_clock::now();
+        std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+        http::response<http::string_body> res{http::status::ok, req.version()};
+        res.set(http::field::server, BOOST_BEAST_VERSION_STRING);
+        res.set(http::field::content_type, "text/plain");
+        res.keep_alive(req.keep_alive());
+        res.body() = std::ctime(&now_time);
+        res.prepare_payload();
+        return res;
     }
 
-    if (params->size() != 3) {
-        return bad_request("Invalid query string");
+    // Handling /status
+    if (req.target() == "/status" && req.method() == http::verb::get) {
+        http::response<http::string_body> res{http::status::ok, req.version()};
+        res.set(http::field::server, BOOST_BEAST_VERSION_STRING);
+        res.set(http::field::content_type, "text/plain");
+        res.keep_alive(req.keep_alive());
+        res.body() = "Server is running smoothly!";
+        res.prepare_payload();
+        return res;
     }
 
-    // 1000000, 4096, 50
-    size_t total_size = 0;
-    size_t chunk_size = 0;
-    size_t delay_ms = 0;
-
-    for (auto const& param : *params) {
-        if (param.key == "total_size") {
-            std::from_chars(param.value.data(), param.value.data() + param.value.size(), total_size);
-        } else if (param.key == "chunk_size") {
-            std::from_chars(param.value.data(), param.value.data() + param.value.size(), chunk_size);
-        } else if (param.key == "delay_ms") {
-            std::from_chars(param.value.data(), param.value.data() + param.value.size(), delay_ms);
+    // Handling /bigfile
+    if (req.target().starts_with("/bigfile")) {
+        boost::url_view url = req.target();
+        auto params = boost::urls::parse_query(url.encoded_query());
+        if ( ! params) {
+            return bad_request("Invalid query string");
         }
+
+        if (params->size() != 3) {
+            return bad_request("Invalid query string");
+        }
+
+        // 1000000, 4096, 50
+        size_t total_size = 0;
+        size_t chunk_size = 0;
+        size_t delay_ms = 0;
+
+        for (auto const& param : *params) {
+            if (param.key == "total_size") {
+                std::from_chars(param.value.data(), param.value.data() + param.value.size(), total_size);
+            } else if (param.key == "chunk_size") {
+                std::from_chars(param.value.data(), param.value.data() + param.value.size(), chunk_size);
+            } else if (param.key == "delay_ms") {
+                std::from_chars(param.value.data(), param.value.data() + param.value.size(), delay_ms);
+            }
+        }
+
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> distrib(0, 255);
+
+        std::vector<uint8_t> body;
+        body.reserve(total_size);
+
+        for (size_t sent = 0; sent < total_size; sent += chunk_size) {
+            std::vector<uint8_t> chunk;
+            chunk.reserve(chunk_size);
+            for(size_t i = 0; i < chunk_size && sent + i < total_size; ++i) {
+                chunk.push_back(static_cast<uint8_t>(distrib(gen)));
+            }
+            body.insert(body.end(), chunk.begin(), chunk.end());
+
+            if (sent + chunk_size < total_size) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+            }
+        }
+
+        http::response<http::vector_body<uint8_t>> res {
+            std::piecewise_construct,
+            std::make_tuple(std::move(body)),
+            std::make_tuple(http::status::ok, req.version())
+        };
+        res.set(http::field::server, BOOST_BEAST_VERSION_STRING);
+        res.set(http::field::content_type, "application/octet-stream");
+        res.content_length(total_size);
+        res.keep_alive(req.keep_alive());
+        return res;
+
     }
 
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> distrib(0, 255);
-
-    std::vector<uint8_t> body;
-    body.reserve(total_size);
-
-    for (size_t sent = 0; sent < total_size; sent += chunk_size) {
-        std::vector<uint8_t> chunk;
-        chunk.reserve(chunk_size);
-        for(size_t i = 0; i < chunk_size && sent + i < total_size; ++i) {
-            chunk.push_back(static_cast<uint8_t>(distrib(gen)));
-        }
-        body.insert(body.end(), chunk.begin(), chunk.end());
-
-        if (sent + chunk_size < total_size) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
-        }
-    }
-
-    http::response<http::vector_body<uint8_t>> res {
-        std::piecewise_construct,
-        std::make_tuple(std::move(body)),
-        std::make_tuple(http::status::ok, req.version())
-    };
-    res.set(http::field::server, BOOST_BEAST_VERSION_STRING);
-    res.set(http::field::content_type, "application/octet-stream");
-    res.content_length(total_size);
-    res.keep_alive(req.keep_alive());
-    return res;
+    return not_found(req.target());
 }
 
 //------------------------------------------------------------------------------
